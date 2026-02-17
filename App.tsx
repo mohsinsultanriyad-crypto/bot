@@ -73,54 +73,6 @@ const App: React.FC = () => {
   );
 };
 
-  if (!currentUser) {
-    return <Login onLogin={handleLogin} workers={workers} />;
-  }
 
-  return (
-    <div 
-      className={`min-h-screen max-w-md mx-auto bg-white shadow-xl relative overflow-hidden flex flex-col`}
-      dir={language === 'ar' ? 'rtl' : 'ltr'}
-    >
-      {currentUser.role === 'admin' ? (
-        <AdminApp 
-          user={currentUser} 
-          shifts={shifts} 
-          setShifts={setShifts} 
-          leaves={leaves} 
-          setLeaves={setLeaves}
-          workers={workers}
-          setWorkers={setWorkers}
-          posts={posts}
-          setPosts={setPosts}
-          advanceRequests={advanceRequests}
-          setAdvanceRequests={setAdvanceRequests}
-          announcements={announcements}
-          setAnnouncements={setAnnouncements}
-          onLogout={handleLogout}
-          language={language}
-          setLanguage={setLanguage}
-        />
-      ) : (
-        <WorkerApp 
-          user={currentUser} 
-          shifts={shifts} 
-          setShifts={setShifts} 
-          leaves={leaves} 
-          setLeaves={setLeaves}
-          posts={posts}
-          setPosts={setPosts}
-          advanceRequests={advanceRequests}
-          setAdvanceRequests={setAdvanceRequests}
-          announcements={announcements}
-          workers={workers}
-          onLogout={handleLogout}
-          language={language}
-          setLanguage={setLanguage}
-        />
-      )}
-    </div>
-  );
-};
 
 export default App;
