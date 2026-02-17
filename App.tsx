@@ -1,63 +1,77 @@
 
+
 import React, { useState, useEffect } from 'react';
-import { User, Shift, Leave, SitePost, AdvanceRequest, Announcement } from './types';
-import { MOCK_WORKERS, MOCK_ADMIN } from './constants';
 import WorkerApp from './components/WorkerApp';
 import AdminApp from './components/AdminApp';
 import Login from './components/Login';
 import { Language } from './translations';
 
 const App: React.FC = () => {
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [shifts, setShifts] = useState<Shift[]>([]);
-  const [leaves, setLeaves] = useState<Leave[]>([]);
-  const [posts, setPosts] = useState<SitePost[]>([]);
-  const [workers, setWorkers] = useState<User[]>(MOCK_WORKERS);
-  const [advanceRequests, setAdvanceRequests] = useState<AdvanceRequest[]>([]);
-  const [announcements, setAnnouncements] = useState<Announcement[]>([]);
-  const [isLoaded, setIsLoaded] = useState(false);
+  const [currentUser, setCurrentUser] = useState<any>(null);
+  const [token, setToken] = useState<string | null>(null);
+  const [role, setRole] = useState<string | null>(null);
   const [language, setLanguage] = useState<Language>('en');
+  const [attendance, setAttendance] = useState<any[]>([]);
 
-  // Persistence: Load
+  // On app load, rehydrate auth state
   useEffect(() => {
-    const savedShifts = localStorage.getItem('fw_shifts');
-    const savedLeaves = localStorage.getItem('fw_leaves');
-    const savedPosts = localStorage.getItem('fw_posts');
-    const savedWorkers = localStorage.getItem('fw_workers');
-    const savedAdvance = localStorage.getItem('fw_advance');
-    const savedAnnouncements = localStorage.getItem('fw_announcements');
-    const savedLang = localStorage.getItem('fw_lang');
-    
-    if (savedShifts) setShifts(JSON.parse(savedShifts));
-    if (savedLeaves) setLeaves(JSON.parse(savedLeaves));
-    if (savedPosts) setPosts(JSON.parse(savedPosts));
-    if (savedWorkers) setWorkers(JSON.parse(savedWorkers));
-    if (savedAdvance) setAdvanceRequests(JSON.parse(savedAdvance));
-    if (savedAnnouncements) setAnnouncements(JSON.parse(savedAnnouncements));
-    if (savedLang) setLanguage(savedLang as Language);
-    
-    setIsLoaded(true);
+    const storedToken = localStorage.getItem('token');
+    const storedRole = localStorage.getItem('role');
+    if (storedToken && storedRole) {
+      setToken(storedToken);
+      setRole(storedRole);
+    }
   }, []);
 
-  // Persistence: Save
+  // Fetch attendance from backend when logged in
   useEffect(() => {
-    if (!isLoaded) return;
-    localStorage.setItem('fw_shifts', JSON.stringify(shifts));
-    localStorage.setItem('fw_leaves', JSON.stringify(leaves));
-    localStorage.setItem('fw_posts', JSON.stringify(posts));
-    localStorage.setItem('fw_workers', JSON.stringify(workers));
-    localStorage.setItem('fw_advance', JSON.stringify(advanceRequests));
-    localStorage.setItem('fw_announcements', JSON.stringify(announcements));
-    localStorage.setItem('fw_lang', language);
-  }, [isLoaded, shifts, leaves, posts, workers, advanceRequests, announcements, language]);
+    if (token) {
+      import('./apiClient').then(({ default: api }) => {
+        api.get('/api/attendance')
+          .then(res => setAttendance(res.data))
+          .catch(() => setAttendance([]));
+      });
+    }
+  }, [token]);
 
-  const handleLogin = (user: User) => {
+  const handleLogin = (user: any, token: string, role: string) => {
     setCurrentUser(user);
+    setToken(token);
+    setRole(role);
+    // Fetch attendance after login
+    import('./apiClient').then(({ default: api }) => {
+      api.get('/api/attendance')
+        .then(res => setAttendance(res.data))
+        .catch(() => setAttendance([]));
+    });
   };
 
   const handleLogout = () => {
     setCurrentUser(null);
+    setToken(null);
+    setRole(null);
+    setAttendance([]);
+    localStorage.removeItem('token');
+    localStorage.removeItem('role');
   };
+
+  // Protect routes: if no token, show login
+  if (!token) {
+    return <Login onLogin={handleLogin} />;
+  }
+
+  // Pass attendance and setAttendance to children
+  return (
+    <div className="min-h-screen max-w-md mx-auto bg-white shadow-xl relative overflow-hidden flex flex-col">
+      <button onClick={handleLogout} className="absolute top-2 right-2 bg-red-100 text-red-600 px-3 py-1 rounded">Logout</button>
+      {role === 'admin' ? (
+        <AdminApp user={currentUser} attendance={attendance} setAttendance={setAttendance} language={language} setLanguage={setLanguage} onLogout={handleLogout} />
+      ) : (
+        <WorkerApp user={currentUser} attendance={attendance} setAttendance={setAttendance} language={language} setLanguage={setLanguage} onLogout={handleLogout} />
+      )}
+    </div>
+  );
+};
 
   if (!currentUser) {
     return <Login onLogin={handleLogin} workers={workers} />;

@@ -1,14 +1,16 @@
 
+
 import React, { useState, useMemo, useEffect } from 'react';
-import { User, Shift, Announcement, AdvanceRequest, OTHistoryItem } from '../types';
+import { User, Announcement, AdvanceRequest } from '../types';
 import { DAYS_IN_MONTH, BASE_HOURS } from '../constants';
 import { Clock, Save, Edit3, Zap, Coffee, Calendar, Info, ShieldCheck, CheckCircle2, MessageCircle, XCircle, ListChecks, History as HistoryIcon } from 'lucide-react';
 import { translations, Language } from '../translations';
+import api from '../apiClient';
 
 interface WorkerDashboardProps {
   user: User;
-  shifts: Shift[];
-  setShifts: React.Dispatch<React.SetStateAction<Shift[]>>;
+  attendance: any[];
+  setAttendance: (a: any[]) => void;
   leaves: any[];
   advanceRequests: AdvanceRequest[];
   announcements: Announcement[];
@@ -17,17 +19,32 @@ interface WorkerDashboardProps {
   language?: Language;
 }
 
-const WorkerDashboard: React.FC<WorkerDashboardProps> = ({ user, shifts, setShifts, leaves, announcements, advanceRequests, workers, viewMode = 'dashboard', language = 'en' }) => {
+const WorkerDashboard: React.FC<WorkerDashboardProps> = ({ user, attendance, setAttendance, leaves, announcements, advanceRequests, workers, viewMode = 'dashboard', language = 'en' }) => {
   const todayStr = new Date().toISOString().split('T')[0];
   const [selectedDate, setSelectedDate] = useState(todayStr);
   const [approvalTab, setApprovalTab] = useState<'pending' | 'history'>('pending');
   const [manualOtHours, setManualOtHours] = useState<Record<string, string>>({});
   const t = translations[language];
-  const supervisors = useMemo<User[]>(() => workers.filter(w => w.role === 'supervisor'), [workers]);
+  const supervisors = useMemo(() => workers.filter(w => w.role === 'supervisor'), [workers]);
+
+  // Always fetch attendance from backend on mount or after submit/update
+  const fetchAttendance = async () => {
+    try {
+      const res = await api.get('/api/attendance');
+      setAttendance(res.data);
+    } catch {
+      setAttendance([]);
+    }
+  };
+
+  useEffect(() => {
+    fetchAttendance();
+    // eslint-disable-next-line
+  }, []);
 
   const selectedShift = useMemo(() => 
-    shifts.find(s => s.workerId === user.id && s.date === selectedDate),
-    [shifts, user.id, selectedDate]
+    attendance.find(s => s.workerId === user.id && s.date === selectedDate),
+    [attendance, user.id, selectedDate]
   );
 
   const [inTime, setInTime] = useState('08:00');
@@ -37,16 +54,6 @@ const WorkerDashboard: React.FC<WorkerDashboardProps> = ({ user, shifts, setShif
   const [isEditing, setIsEditing] = useState(false);
   const [supervisorId, setSupervisorId] = useState('');
   const [otReason, setOtReason] = useState('');
-
-  const pendingOTRequests = useMemo(() => 
-    shifts.filter(s => s.supervisorId === user.id && s.otStatus === 'pending'),
-    [shifts, user.id]
-  );
-
-  const historyOTRequests = useMemo(() => 
-    shifts.filter(s => s.supervisorId === user.id && (s.otStatus === 'approved' || s.otStatus === 'rejected')),
-    [shifts, user.id]
-  );
 
   useEffect(() => {
     if (selectedShift) {
@@ -91,88 +98,65 @@ const WorkerDashboard: React.FC<WorkerDashboardProps> = ({ user, shifts, setShif
   const currentBreakdown = calculateBreakdown(inTime, outTime, breakMins);
   const isOTRequired = currentBreakdown.total > BASE_HOURS;
 
-  const handleSave = () => {
+
+  const handleSave = async () => {
     const [inH, inM] = inTime.split(':').map(Number);
     const [outH, outM] = outTime.split(':').map(Number);
     const startTime = new Date(new Date(selectedDate).setHours(inH, inM, 0, 0)).getTime();
     const endTime = new Date(new Date(selectedDate).setHours(outH, outM, 0, 0)).getTime();
     const sv = supervisors.find(s => s.id === supervisorId);
-
     const isWorker = user.role === 'worker';
     const hasOT = currentBreakdown.total > BASE_HOURS;
-
-    const newShift: Shift = {
-      id: selectedShift?.id || Math.random().toString(36).substr(2, 9),
+    const payload = {
       workerId: user.id,
       date: selectedDate,
-      startTime,
-      endTime,
-      breakMinutes: Number(breakMins),
-      notes,
-      status: 'pending',
-      isApproved: false,
+      inTime,
+      outTime,
+      lunch: breakMins,
       totalHours: currentBreakdown.total,
-      approvedHours: Math.min(BASE_HOURS, currentBreakdown.total),
-      otRequestedHours: Math.max(0, currentBreakdown.total - BASE_HOURS),
-      otApprovedHours: user.role === 'supervisor' ? Math.max(0, currentBreakdown.total - BASE_HOURS) : 0,
-      otStatus: hasOT ? (user.role === 'supervisor' ? 'approved' : 'pending') : 'none',
+      baseHours: Math.min(BASE_HOURS, currentBreakdown.total),
+      overtime: Math.max(0, currentBreakdown.total - BASE_HOURS),
+      status: 'pending',
       supervisorId: isWorker ? sv?.id : undefined,
-      supervisorName: isWorker ? sv?.name : 'Auto-Admin',
-      otReason: otReason,
-      estimatedEarnings: currentBreakdown.totalEarnings,
-      approvedEarnings: 0,
-      otHistory: []
+      notes,
+      otReason
     };
-
-    setShifts(prev => {
-      const filtered = prev.filter(s => s.id !== newShift.id);
-      return [...filtered, newShift];
-    });
-    setIsEditing(false);
+    try {
+      await api.post('/api/attendance', payload);
+      await fetchAttendance();
+      setIsEditing(false);
+    } catch {}
   };
 
-  const handleSupervisorDecision = (shiftId: string, decision: 'approved' | 'rejected') => {
+
+  const handleSupervisorDecision = async (shiftId: string, decision: 'approved' | 'rejected') => {
     const manualVal = manualOtHours[shiftId];
-    
-    setShifts(prev => prev.map(s => {
-      if (s.id === shiftId) {
-        const finalOt = decision === 'approved' 
-          ? (manualVal !== undefined && manualVal !== '' ? Number(manualVal) : s.otRequestedHours) 
-          : 0;
-        
-        const historyItem: OTHistoryItem = {
-          actionType: decision === 'approved' ? 'APPROVE' : 'REJECT',
-          timestamp: Date.now(),
-          supervisorId: user.id,
-          supervisorName: user.name,
-          previousOtHours: s.otRequestedHours,
-          newOtHours: finalOt
-        };
-
-        return {
-          ...s,
-          otStatus: decision,
-          otApprovedHours: finalOt,
-          supervisorDecisionAt: Date.now(),
-          otHistory: [...(s.otHistory || []), historyItem]
-        };
-      }
-      return s;
-    }));
-
-    setManualOtHours(prev => {
-      const n = {...prev};
-      delete n[shiftId];
-      return n;
-    });
+    const shift = attendance.find(s => s.id === shiftId);
+    if (!shift) return;
+    const payload = {
+      ...shift,
+      otStatus: decision,
+      otApprovedHours: decision === 'approved' 
+        ? (manualVal !== undefined && manualVal !== '' ? Number(manualVal) : shift.otRequestedHours) 
+        : 0,
+      supervisorDecisionAt: Date.now(),
+    };
+    try {
+      await api.put(`/api/attendance/${shiftId}`, payload);
+      await fetchAttendance();
+      setManualOtHours(prev => {
+        const n = {...prev};
+        delete n[shiftId];
+        return n;
+      });
+    } catch {}
   };
 
   const stats = useMemo(() => {
-    const workerShifts = shifts.filter(s => s.workerId === user.id);
+    const workerShifts = attendance.filter(s => s.workerId === user.id);
     let appTotalEarnings = 0;
     let totalWorkHours = 0;
     let totalApprovedBillableHours = 0;
-
     workerShifts.forEach(s => {
       totalWorkHours += s.totalHours;
       if (s.isApproved) {
@@ -181,9 +165,8 @@ const WorkerDashboard: React.FC<WorkerDashboardProps> = ({ user, shifts, setShif
         totalApprovedBillableHours += (s.approvedHours + s.otApprovedHours);
       }
     });
-
     return { appTotalEarnings, totalWorkHours, totalApprovedBillableHours };
-  }, [shifts, user.id, user.monthlySalary]);
+  }, [attendance, user.id, user.monthlySalary]);
 
   const getWorker = (id: string) => workers.find(w => w.id === id);
 
